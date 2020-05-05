@@ -1,0 +1,48 @@
+---
+title: "Untitled"
+author: "Ngoc Duong, Jared Garfinkel, Adeline Shin, Alyssa Vanderbeek"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(data.table)
+library(maps)
+library(caret)
+```
+
+
+```{r traintest}
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
+  janitor::clean_names() %>%
+  mutate(id = str_sub(id, end = -6L)) %>%
+  group_by(id) %>%
+  mutate(n = 1,
+         t = cumsum(n) - 1) %>% # create t variable grouped by hurrican
+  select(-n)
+
+## 80-20 train/test data split ***by hurricane***
+hurricane_names = unique(raw_dat$id) # unique hurricanes
+
+set.seed(1)
+ind = sample(hurricane_names, size = length(hurricane_names)*0.8) # sample hurricanes with probability 0.8 for training
+train = raw_dat %>% # data for train hurricanes
+  filter(id %in% ind)
+test = raw_dat %>% # data for test hurricanes
+  filter(!(id %in% ind))
+```
+
+
+```{r mcmc}
+
+```
+
+
+```{r}
+
+```
+
+
