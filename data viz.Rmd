@@ -1,0 +1,65 @@
+---
+title: "Data visualizations"
+author: "Ngoc Duong, Jared Garfinkel, Adeline Shin, Alyssa Vanderbeek"
+date: "5/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+library(tidyverse)
+library(data.table)
+library(maps)
+```
+
+
+```{r data}
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
+  janitor::clean_names() %>%
+  mutate(id = str_sub(id, end = -6L))
+```
+
+```{r}
+# data summary
+dt <- data.table::as.data.table(raw_dat)
+summary(raw_dat)
+
+# median wind speed for hurricanes by lat-long coordinates
+ggplot(data=raw_dat, aes(x = longitude, y = latitude)) + 
+  stat_summary_2d(data = raw_dat, aes(x = longitude, y = latitude, z = wind_kt), fun = median, binwidth = c(1, 1), show.legend = TRUE)
+
+# Mean wind speed on map
+map <- ggplot(data = raw_dat, aes(x = longitude, y = latitude)) + 
+  geom_polygon(data = map_data(map = 'world'), aes(x = long, y = lat, group = group))
+map +
+  stat_summary_2d(data = raw_dat, aes(x = longitude, y = latitude, z = wind_kt), fun = median, binwiraw_dath = c(1, 1), show.legend = TRUE, alpha = 0.75) + 
+  ggtitle(paste0("Atlantic Windstorm mean knot"))
+
+
+# hurricane trajectories and wind speeds
+map <- ggplot(raw_dat, aes(x = longitude, y = latitude, group = id)) + 
+  geom_polygon(data = map_data("world"), 
+               aes(x = long, y = lat, group = group), 
+               fill = "gray25", colour = "gray10", size = 0.2) + 
+  geom_path(data = dt, aes(group = id, colour = wind_kt), size = 0.5) + 
+  xlim(-138, -20) + ylim(3, 55) + 
+  labs(x = "", y = "", colour = "Wind \n(knots)") + 
+  theme(panel.background = element_rect(fill = "gray10", colour = "gray30"),
+        axis.text.x = element_blank(), axis.text.y = element_blank(), 
+        axis.ticks = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+seasonrange <- paste(range(raw_dat[, "season"]), collapse=" - ")
+
+map + ggtitle(paste("Atlantic named Windstorm Trajectories (", 
+                     seasonrange, ")\n")) 
+
+
+mapMonth <- map + facet_wrap(~ month) +
+  ggtitle(paste("Atlantic named Windstorm Trajectories by Month (", 
+                 seasonrange, ")\n")) 
+mapMonth
+```
+
+
