@@ -56,15 +56,15 @@ train_clean = train %>% rename(year = season) %>%
 
 train_test = filter(train_clean, id == "ALLISON")
   
-X = train_test %>% mutate(intercept = 1) %>% 
+XX = train_test %>% mutate(intercept = 1) %>% 
   select(intercept, date:diff_windkt) %>% as.matrix()
 
-Y = train_test %>% select(wind_kt) %>% as_vector()
+YY = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
 
 
-### Find log-likelihood for
+### Find log-likelihood 
 Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
 
 ```{r}
@@ -73,14 +73,15 @@ Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
 ## mu_X??
 ## rho is scalar
 
-ll_f = function(Sigma, X, mu_X) {
+ll_f = function(X, Y, beta, Sigma, rho) {
   invsigma = diag(1/Sigma)
-  
+  mu_X = t(X) %*% diag(beta) + rho*Y
+
   a = log(Sigma)
-  b = (X - mu_X) %*% invsigma %*% (X - mu_X)
+  b = t(X - t(mu_X)) %*% invsigma %*% (X - t(mu_X))
   c = 7*log(2*pi)
   
-  l = -0.5(a + b + c)
+  l = -0.5*(as.vector(a + b) + c)
   return(l)
 }
 
@@ -89,10 +90,10 @@ ll_beta = function(Sigma, X) {
   invsigma = diag(1/Sigma)
   
   a = log(Sigma)
-  b = X %*% invsigma %*% X
+  b = t(X) %*% invsigma %*% X
   c = 7*log(2*pi)
   
-  l = -0.5(a + b + c)
+  l = -0.5*(as.vector(a + b) + c)
   return(l)
 }
 
@@ -100,6 +101,7 @@ ll_rho = function(rho) {
   a = log(sqrt(5))
   b = log(dnorm(sqrt(5)*(rho - 0.5)))
   c = log(pnorm(sqrt(5)/2) - pnorm(-sqrt(5)/2))
+  
   l = a + b - c
   return(l)
 }
@@ -113,34 +115,12 @@ ll_invSigma = function(Sigma) {
   d = 0.001/invsigma
   
   l = a - b + c + d
-  return(l)
+  return(diag(l))
 }
 
 
-logpost_beta = function(Sigma, X, mu_X){
-  return(ll_beta(Sigma, X) + ll_f(Sigma, X, mu_X))
-}
-```
-
-
-Other functions
-
-```{r}
-loglik = function(X, Y, beta, sigma, rho) {
-  invsigma = diag(1/sigma)
-  mu_X = beta %*% X + rho*Y
-
-  a = log(sigma)
-  b = (X - mu_X) %*% invsigma %*% (X - mu_X)
-  c = 7*log(2*pi)
-  
-  l = -0.5(a + b + c)
-  return(l)
-}
-
-
-logpost = function(X, Y, beta, rho, sigma){
-   return(sum(loglik(X, Y, beta, rho, sigma) + log(dmvnorm(beta, rep(0,21), diag(1,21))) + log(dtruncnorm(rho, a=0, b=1, mean = 0.5, sd = 1/5)) + log(rinvgamma(sigma, 0.001, 0.001))))
+logpost_all = function(X, Y, beta, rho, Sigma){    
+  return(ll_beta(Sigma, X) + ll_invSigma(Sigma) + ll_f(X, Y, beta, Sigma, rho))
 }
 ```
 
@@ -148,63 +128,87 @@ logpost = function(X, Y, beta, rho, sigma){
 ### MH algorithm
 
 ```{r}
-niter = 1000
-beta_matrix = matrix(nrow = niter, ncol = 7)
-rho_vec = vector(length = niter)
-sigma_vec = vector(length = niter)
 
-comp_MCMC = function(train_X, train_Y, niter, beta, rho, sigma, beta_avec, rho_a, sigma_a){
-  beta_matrix[1,] = beta
-  rho_vec[1] = rho
-  sigma_vec[1] = sigma
+MH_step = function(train_X, train_Y, params, avec){
   
-for (i in 1:niter) {
-   cur_betas = p_betas = beta_matrix[i,]
-   cur_rho = p_rhos = rho_vec[i]
-   cur_sigma = p_sigma = sigma_vec[i]
+  # cast X as matrix 
+  train_X = unname(train_X) %>% as.matrix
+
+  # initialize parameter vectors
+  bb = c() # beta vec
+  rr = NA # rho
+  ss = c() # Sigma
   
-  #sampling for betas first
+  p_betas = cur_betas = params[1:7]
+  cur_rho = rho = params[8]
+  cur_sigma = params[9:15]
+  
+  # estimate Betas
   for (j in 1:7) {
-    cur_betas = beta_matrix[j,]
-    p_betas[j] = cur_betas[j] + (runif(1) - 0.5) * 2 * beta_avec[j]
-    num = logpost(X, Y, beta = p_betas, rho = cur_rho, sigma = cur_sigma)
-    denom = logpost(X, Y, beta = cur_betas, rho = cur_rho, sigma = cur_sigma)
-    if (runif(1) < num/denom) {
-      beta_matrix[j,] = p_betas
+    num = logpost_all(train_X, train_Y, beta = p_betas, rho = cur_rho, Sigma = cur_sigma)
+    denom = logpost_all(train_X, train_Y, beta = cur_betas, rho = cur_rho, Sigma = cur_sigma)
+    
+    cur_betas = p_betas
+    p_betas[j] = cur_betas[j] + ((runif(1) - 0.5) * 2 * avec[j])
+    
+    ## Assign posterior values (component-wise, since logpost_all gives vector)
+    if (log(runif(1)) < (num[j] - denom[j])) {
+      bb[j] = p_betas[j]
     } else {
-      beta_matrix[j,] = cur_betas
-    }}
-  
-  #sampling rhos
-    p_rho = dtruncnorm(rho, a=0, b=1, mean = 0.5, sd = 1/5)/rho_avec
-    num = logpost(X, Y, beta = cur_betas, rho = p_rho, sigma = cur_sigma)
-    denom = logpost(X, Y, beta = cur_betas, rho = cur_rho, sigma = cur_sigma)
-    if (runif(1) < num/denom) {
-       rho_vec[i] = p_rho
+      bb[j] = cur_betas[j]
+    }
   }
+  
+  # placeholder for posterior rho and Sigma values
+  #sampling rhos
+  p_rho = cur_rho#truncnorm::dtruncnorm(rho, a = 0, b = 1, mean = 0.5, sd = 1/5)/avec[8]
   
   #sampling sigmas
-  p_sigma = rinvgamma(1, 0.001, 0.001)/sigma_avec
-  num = logpost(X, Y, beta = cur_betas, rho = cur_rho, sigma = p_sigma)
-  denom = logpost(X, Y, beta = cur_betas, rho = cur_rho, sigma = cur_sigma)
-  if (log(runif(1)) < num - denom) {
-      sigma_vec[i] = p_sigma 
-  }
+  p_sigma = cur_sigma #invgamma::rinvgamma(1, 0.001, 0.001)/avec[9:15]
+    
+  rr = p_rho
+  ss = p_sigma
+
   
-return(list(betas = beta_matrix, rhos = rho_vec, sigmas = sigma_vec))
-}}
+  return(c(bb, rr, ss))
+}
+
+set.seed(1)
+MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
+        train_Y = YY[1], 
+        params = p_start, 
+        avec = avec)
+
+
 ```
 
 Run MCMC
 
 ```{r}
-# first, specify the avecs and start
-beta_avec = rep(2,7)
-rho_a = 2
-sigma_a = 50
+# first, specify the avecs and parameter starting values
+b_avec = rep(2, 7)
+r_a = 2
+sig_a = rep(50, 7)
+avec = c(b_avec, r_a, sig_a)
 
-#start iterating 
-MCMC_res = comp_MCMC(train_X = X, train_Y = Y, 1000, beta = rep(1,7), rho = 0.7, sigma = 2, beta_avec, rho_a, sigma_a)
+beta_start = rep(0, 7)
+sigma_start = rep(1, 7)
+rho_start = 0.7
+p_start = c(beta_start, rho_start, sigma_start)
+
+nrep = 1e3
+mchain <- matrix(NA, nrow = nrep, ncol = 15)
+mchain[1, ] <- p_start
+
+for (i in 2:nrep) {
+  mchain[i, ] = MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
+                        train_Y = YY[1], 
+                        params = mchain[i - 1, ], 
+                        avec = avec)
+}
+
+
+
 ```
 
 
@@ -212,115 +216,26 @@ We can also discard the first 501 values in the chain as “burnin”. This is a
 
 ```{r}
 #run the chain
-beta_burned = beta_matrix[501:1000,]
-rho_burned = rho_vec[501:1000]
-sigma_burned = sigma_vec[501:1000]
+burned = mchain[501:1000, ]
 ```
 
 Next, we might first check the probability of accepting the proposals for each parameter in order to tune the choice ofa. Here’s a useful utility for calculating this:
 
 ```{r}
 numunique <- function(mat){
-  for(i in 1:ncol(mat))
-    cat(i,"\t",length(unique(mat[,i])),"\n")}
+  for(i in 1:ncol(mat)) {
+    cat(i,"\t",length(unique(mat[,i])),"\n")
+  }
+}
 
 #for betas
-numunique(MCMC_res$betas)
+numunique(mchain[, 1:7])
 
 #for rhos
-numunique(MCMC_res$rhos)
+numunique(mchain[, 8])
 
 #for sigma?
-numunique(MCMC_res$sigma)
+numunique(mchain[, 9:15])
 ```
 
-
-## Reference
-
-### Run component-wise algorithm in R for hierarchical Poisson (in-class materials)
-
-Y: number of failures 
-tpts: amount of time pump was operated for 
-
-The log-likelihood function
-```{r}
-loglik <- function(Y, tpts, phi) {
-  return(sum(Y * log(phi * tpts) - phi * tpts))
-}
-```
-
-The log-prior function
-
-```{r}
-logprior <- function(phi, beta, alpha, c=0.01) {
-  n <- length(phi)
-  return(n * alpha * log(beta) - n * lgamma(alpha) -beta * sum(phi) 
-         + (alpha - 1) * sum(log(phi)) - beta + (c - 1) * log(beta))
-}
-```
-
-The log-posterior
-
-```{r}
-logpost <- function(phi, beta, tpts, Y, alpha, c=0.01) {
-  if(min(c(phi, alpha, beta)) <= 0)
-    return(-Inf)
-  else
-    return(loglik(Y, tpts, phi) + logprior(phi, beta, alpha, c))
-  }
-```
-
-Note that this function starts with checking whether all $\phi$ values (Poisson rate parameters) and $\alpha$ and $\beta$ are positive.
-
-```{r}
-MHstep <- function(pars, avec, tpts, Y, alpha, c=0.01){
-  res <- pars
-  npars <- length(pars)
-  for(i in 1:npars) {
-    prop <- res
-    prop[i] <- res[i] + 2 * avec[i] * (runif(1) - 0.5)
-    if(log(runif(1)) < logpost(prop[1:(npars-1)], prop[npars],tpts, Y, alpha, c) - logpost(res[1:(npars-1)],res[npars], tpts, Y, alpha, c))
-      res[i] <- prop[i]}
-  return(res)}
-```
-
-Run the algorithm
-Set the number of steps = 10000
-Define the data y
-
-```{r}
-nrep <- 10000
-y <- c(5, 1, 5, 14, 3, 19, 1, 1, 4, 22)
-tpts <- c(94.320, 15.720, 62.880, 125.760, 5.240, 31.440,1.048, 1.048, 2.096, 10.480)
-```
-
-With choices for a for each parameter and starting values, it’s ready to go:
-
-```{r}
-avec <- rep(0.5, 11)
-mchain <- matrix(NA, nrow=nrep, ncol=length(y) + 1)
-mchain[1,] <- rep(1, 11)
-
-for(i in 2:nrep)
-  mchain[i,] <- MHstep(mchain[i - 1, ], avec, tpts, y, 1.802)
-```
-
-
-We might first check the probability of accepting the proposals for each parameter in order to tune the choice ofa. Here’s a useful utility for calculating this:
-
-```{r}
-numunique <- function(mat){for(i in 1:ncol(mat))cat(i,"\t",length(unique(mat[,i])),"\n")}
-```
-
-Applied to the chain results from the first run
-
-```{r}
-numunique(mchain)
-```
-
-```{r}
-for(i in 1:ncol(mchain)) {
-  cat(i, "\t", mean(mchain[5001:10000,i]), "\n")
-  }
-```
 
