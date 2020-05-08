@@ -11,6 +11,7 @@ editor_options:
 library(tidyverse)
 library(invgamma)
 library(mvtnorm)
+library(lubridate)
 ```
 
 ```{r traintest}
@@ -56,9 +57,9 @@ train_clean = train %>% rename(year = season) %>%
 train_test = filter(train_clean, id == "ALLISON")
   
 X = train_test %>% mutate(intercept = 1) %>% 
-  select(intercept, date:diff_windkt)
+  select(intercept, date:diff_windkt) %>% as.matrix()
 
-Y = train_test %>% select(wind_kt)
+Y = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
 
@@ -128,7 +129,7 @@ Other functions
 loglik = function(X, Y, beta, sigma, rho) {
   invsigma = diag(1/sigma)
   mu_X = beta %*% X + rho*Y
-  
+
   a = log(sigma)
   b = (X - mu_X) %*% invsigma %*% (X - mu_X)
   c = 7*log(2*pi)
@@ -139,7 +140,7 @@ loglik = function(X, Y, beta, sigma, rho) {
 
 
 logpost = function(X, Y, beta, rho, sigma){
-   return(sum(loglik(X, beta, rho, sigma) + log(dmvnorm(beta, rep(0,21), diag(1,21))) + log(dtruncnorm(rho, a=0, b=1, mean = 0.5, sd = 1/5)) + log(rinvgamma(sigma, 0.001, 0.001))))
+   return(sum(loglik(X, Y, beta, rho, sigma) + log(dmvnorm(beta, rep(0,21), diag(1,21))) + log(dtruncnorm(rho, a=0, b=1, mean = 0.5, sd = 1/5)) + log(rinvgamma(sigma, 0.001, 0.001))))
 }
 ```
 
@@ -147,18 +148,19 @@ logpost = function(X, Y, beta, rho, sigma){
 ### MH algorithm
 
 ```{r}
+niter = 1000
 beta_matrix = matrix(nrow = niter, ncol = 7)
 rho_vec = vector(length = niter)
 sigma_vec = vector(length = niter)
 
-comp_MCMC = function(train_X, train_Y, niter, start, beta_avec, rho_a, sigma_a){
-  beta_matrix[1,] = start$beta
-  rho_vec[1] = start$rho
-  sigma_vec[1] = start$sigma
+comp_MCMC = function(train_X, train_Y, niter, beta, rho, sigma, beta_avec, rho_a, sigma_a){
+  beta_matrix[1,] = beta
+  rho_vec[1] = rho
+  sigma_vec[1] = sigma
   
 for (i in 1:niter) {
    cur_betas = p_betas = beta_matrix[i,]
-   cur_rho = p_rhos = rho_vec[i,]
+   cur_rho = p_rhos = rho_vec[i]
    cur_sigma = p_sigma = sigma_vec[i]
   
   #sampling for betas first
@@ -197,13 +199,12 @@ Run MCMC
 
 ```{r}
 # first, specify the avecs and start
-start = list(beta = rep(1,7), rho = 0.7, sigma = 1)
-beta_avec = rep(1,7)
+beta_avec = rep(2,7)
 rho_a = 2
 sigma_a = 50
 
 #start iterating 
-MCMC_res = comp_MCMC(train_X = X, train_Y = Y, 1000, start, beta_avec, rho_a, sigma_a)
+MCMC_res = comp_MCMC(train_X = X, train_Y = Y, 1000, beta = rep(1,7), rho = 0.7, sigma = 2, beta_avec, rho_a, sigma_a)
 ```
 
 
