@@ -140,7 +140,7 @@ MH_step = function(train_X, train_Y, params, avec){
   ss = c() # Sigma
   
   p_betas = cur_betas = params[1:7]
-  cur_rho = rho = params[8]
+  cur_rho = p_rho = rho = params[8]
   cur_sigma = params[9:15]
   
   # estimate Betas
@@ -159,9 +159,20 @@ MH_step = function(train_X, train_Y, params, avec){
     }
   }
   
+  
   # placeholder for posterior rho and Sigma values
   #sampling rhos
-  p_rho = cur_rho#truncnorm::dtruncnorm(rho, a = 0, b = 1, mean = 0.5, sd = 1/5)/avec[8]
+  num = logpost_all(train_X, train_Y, beta = params[1:7], rho = p_rho, Sigma = cur_sigma)
+  denom = logpost_all(train_X, train_Y, beta = params[1:7], rho = cur_rho, Sigma = cur_sigma)
+  
+  cur_rho = p_rho
+  p_rho = log(truncnorm::dtruncnorm(cur_rho, a = 0, b = 1, mean = 0.5, sd = 1/5))
+  
+  if (log(runif(1)) < (num[8] - denom[8])) {
+      rr = p_rho
+    } else {
+      rr = cur_rho
+    }
   
   #sampling sigmas
   p_sigma = cur_sigma #invgamma::rinvgamma(1, 0.001, 0.001)/avec[9:15]
@@ -171,6 +182,12 @@ MH_step = function(train_X, train_Y, params, avec){
 
   
   return(c(bb, rr, ss))
+}
+
+numunique <- function(mat){
+  for(i in 1:ncol(mat)) {
+    cat(i,"\t",length(unique(mat[,i])),"\n")
+  }
 }
 
 set.seed(1)
@@ -186,9 +203,9 @@ Run MCMC
 
 ```{r}
 # first, specify the avecs and parameter starting values
-b_avec = rep(2, 7)
-r_a = 2
-sig_a = rep(50, 7)
+b_avec = rep(0.5, 7) #c(10, rep(2, 5), 5)
+r_a = 0.5
+sig_a = rep(2, 7)
 avec = c(b_avec, r_a, sig_a)
 
 beta_start = rep(0, 7)
@@ -201,13 +218,21 @@ mchain <- matrix(NA, nrow = nrep, ncol = 15)
 mchain[1, ] <- p_start
 
 for (i in 2:nrep) {
-  mchain[i, ] = MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
-                        train_Y = YY[1], 
+  mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
+                        train_Y = YY[10], 
                         params = mchain[i - 1, ], 
                         avec = avec)
 }
 
+par(mfrow = c(4, 2))
+for (k in 1:7) {
+  plot(mchain[501:1000, k], type = "l", ylab = k - 1)
+}
 
+numunique(mchain[, 1:7])
+for (i in 1:ncol(mchain)) {
+  cat(i, "\t", mean(mchain[501:1000,i]), "\n")
+} 
 
 ```
 
