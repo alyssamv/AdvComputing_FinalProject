@@ -75,16 +75,25 @@ Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
 ## rho is scalar
 
 ll_f = function(X, Y, beta, Sigma, rho) {
-  #invsigma = diag(1/Sigma)
+  sig.vec = rep(Sigma, 7)
+  invsigma = diag(1/sig.vec)
   mu_X = t(X) %*% diag(beta) + rho*Y
   
   a = log(Sigma)
-  b = (X - t(mu_X)) %*% (1/Sigma) %*% t(X - t(mu_X))
+  b = t(X - t(mu_X)) %*% invsigma %*% (X - t(mu_X)) %>% as.numeric
   c = 7*log(2*pi)
   
   l = -0.5*(as.vector(a + b) + c)
-  return(sum(l))
+  return(l)
 }
+
+ll_f = function(X, Y, beta, Sigma, rho) {
+  p = dmvnorm(X, mean = rep(0, 7), sigma = diag(rep(Sigma, 7)), log = TRUE)
+  
+  return(p)
+}
+
+ll_f(xx1, YY[10], beta = rep(0, 7), Sigma = 1, rho = 0.5)
 
 
 ll_beta = function(Sigma, X) {
@@ -107,23 +116,23 @@ ll_rho = function(rhos) {
 
 ll_sigma = function(sigma) {
   # Prior for the inverse of the error covariance matrix
-  return(log(dinvgamma(sigma, 0.0001, 0.0001)))
+  return(log(dinvgamma(1/sigma, 0.0001, 0.0001)))
 }
 
 ll_beta = function(betas) {
-  return(sum(log(dnorm(betas, mean = 0, sd = 1))))
+  return((log(dnorm(betas, mean = 0, sd = 1))))
 }
 
 ###################################
 
-ll_rho = function(rho) {
-  a = log(sqrt(5))
-  b = log(dnorm(sqrt(5)*(rho - 0.5)))
-  c = log(pnorm(sqrt(5)/2) - pnorm(-sqrt(5)/2))
-  
-  l = a + b - c
-  return(l)
-}
+# ll_rho = function(rho) {
+#   a = log(sqrt(5))
+#   b = log(dnorm(sqrt(5)*(rho - 0.5)))
+#   c = log(pnorm(sqrt(5)/2) - pnorm(-sqrt(5)/2))
+#   
+#   l = a + b - c
+#   return(l)
+# }
 
 ll_invSigma = function(Sigma) {
   invsigma = diag(1/Sigma)
@@ -139,8 +148,16 @@ ll_invSigma = function(Sigma) {
 
 
 logpost_all = function(X, Y, beta, rho, Sigma){    
-  return(ll_beta(beta) + ll_sigma(Sigma) + ll_rho(rho) + ll_f(X, Y, beta, Sigma, rho))
+  return(c(ll_beta(beta) + ll_sigma(Sigma), ll_sigma(Sigma), ll_rho(rho)) + ll_f(X, Y, beta, Sigma, rho))
 }
+
+xx1 = unname(XX[10,]) %>% as.matrix
+
+logpost_all(xx1, YY[10], beta = mchain[4, 1:7], rho = 0.5, Sigma = 1)
+
+ll_rho(0.5)
+
+ll_f(xx1, YY[10], beta = rep(0, 7), Sigma = 1, rho = 0.5)
 ```
 
 
@@ -154,6 +171,7 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   bnum = vector(length = 7)
   bdenom = vector(length = 7)
 
+
   # initialize parameter vectors
   bb = c() # beta vec
   rr = NA # rho
@@ -162,14 +180,17 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   p_betas = cur_betas = params[1:7]
   cur_rho = p_rho = rho = params[8]
   cur_sigma = params[9]
+
+
   
   # estimate Betas
   for (j in 1:7) {
+
+    cur_betas[j] = p_betas[j]
+    p_betas[j] = cur_betas[j] + (runif(1) - 0.5) * 2 * b_avec[j]
     
-    cur_betas = p_betas
-    p_betas = cur_betas + (runif(1) - 0.5) * 2 * b_avec
-    bnum[j] = logpost_all(train_X, train_Y, beta = p_betas, rho = cur_rho, Sigma = cur_sigma)
-    bdenom[j] = logpost_all(train_X, train_Y, beta = cur_betas, rho = cur_rho, Sigma = cur_sigma)
+    bnum = logpost_all(train_X, train_Y, beta = p_betas, rho = cur_rho, Sigma = cur_sigma)
+    bdenom = logpost_all(train_X, train_Y, beta = cur_betas, rho = cur_rho, Sigma = cur_sigma)
     ## Assign posterior values (component-wise, since logpost_all gives vector)
     if (log(runif(1)) < (bnum[j] - bdenom[j])) {
       bb[j] = p_betas[j]
@@ -177,30 +198,31 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
       bb[j] = cur_betas[j]}
   }
   
-    #sampling rhos
-    p_rho = cur_rho + (runif(1) - 0.5) * 2 * r_a
-    rnum = logpost_all(train_X, train_Y, beta = bb, rho = p_rho, Sigma = cur_sigma)
-    rdenom = logpost_all(train_X, train_Y, beta = bb, rho = cur_rho, Sigma = cur_sigma)
-  #cur_rho = p_rho 
-  if (log(runif(1)) < (rnum - rdenom)) {
-      rr = p_rho
-    } else {
-     rr = cur_rho}
+  #sampling rhos
+  p_rho = cur_rho + (runif(1) - 0.5) * 2 * r_a
+  rnum = logpost_all(train_X, train_Y, beta = bb, rho = p_rho, Sigma = cur_sigma)
+  rdenom = logpost_all(train_X, train_Y, beta = bb, rho = cur_rho, Sigma = cur_sigma)
+  #cur_rho = p_rho
+  if (log(runif(1)) < (rnum[8] - rdenom[8])) {
+    rr = p_rho
+  } else {
+    rr = cur_rho
+  }
   
-    #sampling sigmas
-    p_sigma = cur_sigma + (runif(1) - 0.5) * 2 * sig_a
-  snum = logpost_all(train_X, train_Y, beta = bb, rho = cur_rho, Sigma = p_sigma)
-  sdenom = logpost_all(train_X, train_Y, beta = bb, rho = cur_rho, Sigma = cur_sigma)
-  p_sigma = cur_sigma
-  if (log(runif(1)) < (snum - sdenom)) {
-      ss = p_sigma
-    } else {
-      ss = cur_sigma}
-    
+  #sampling sigmas
+  p_sigma = cur_sigma + (runif(1) - 0.5) * 2 * sig_a
+  snum = logpost_all(train_X, train_Y, beta = bb, rho = rr, Sigma = p_sigma)
+  sdenom = logpost_all(train_X, train_Y, beta = bb, rho = rr, Sigma = cur_sigma)
+  if (log(runif(1)) < (snum[9] - sdenom[9])) {
+    ss = p_sigma
+  } else {
+    ss = cur_sigma}
+  
   #rr = p_rho
   #ss = p_sigma
 
   return(c(bb, rr, ss))
+  
 }
 ```
 
@@ -212,11 +234,6 @@ numunique <- function(mat){
   }
 }
 
-set.seed(1)
-MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
-        train_Y = YY[1], 
-        params = p_start, 
-        avec = avec)
 ```
 
 Run MCMC
@@ -227,11 +244,11 @@ Run MCMC
 #avec = c(b_avec, r_a, sig_a)
 
 beta_start = rep(0, 7)
-sigma_start = 300
+sigma_start = 1
 rho_start = 0.5
 p_start = c(beta_start, rho_start, sigma_start)
 
-nrep = 5000
+nrep = 2000
 mchain <- matrix(NA, nrow = nrep, ncol = 9)
 mchain[1, ] <- p_start
 
@@ -240,22 +257,19 @@ for (i in 2:nrep) {
   mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
                         train_Y = YY[10], 
                         params = mchain[i - 1, ], 
-                        b_avec = c(0.25, rep(0.75,6)),
-                        r_a = 0.5,
-                        sig_a = 0.2)
-}
-```
-
-
-```{r eval = FALSE}
-par(mfrow = c(4, 2))
-for (k in 1:7) {
-  plot(mchain[501:1000, k], type = "l", ylab = k - 1)
+                        b_avec = c(0.5, 0.25, 0.25, 0.5, 0.5, 0.5, 0.5),
+                        r_a = 0.05,
+                        sig_a = 0.1)
 }
 
-numunique(mchain[, 1:7])
+par(mfrow = c(5, 2))
+for (k in 1:ncol(mchain)) {
+  plot(mchain[1001:2000, k], type = "l", ylab = k - 1)
+}
+
+numunique(mchain)
 for (i in 1:ncol(mchain)) {
-  cat(i, "\t", mean(mchain[501:1000,i]), "\n")
+  cat(i, "\t", mean(mchain[1001:2000,i]), "\n")
 } 
 ```
 
@@ -263,7 +277,7 @@ Visualize on full chain
 
 ```{r}
 as_tibble(mchain) %>% 
-  mutate(n = c(1:7000)) %>% 
+  mutate(n = c(1:5000)) %>% 
   pivot_longer(V1:V8, 
                names_to = "Predictors",
                values_to = "estimate") %>% 
@@ -288,17 +302,13 @@ Visualize on burned out chain
                values_to = "estimate") %>% 
   ggplot(aes(x = n, y = estimate, group = Predictors, col = Predictors)) + 
   geom_line() +
-  facet_grid(Predictors~.)
+  facet_grid(.~Predictors)
 ```
 
 Next, we might first check the probability of accepting the proposals for each parameter in order to tune the choice ofa. Here’s a useful utility for calculating this:
 
 ```{r}
-numunique <- function(mat){
-  for(i in 1:ncol(mat)) {
-    cat(i,"\t",length(unique(mat[,i])),"\n")
-  }
-}
+
 
 #for betas (1-7), rhos (8), and sigma (9)
 numunique(mchain[, 1:9])
