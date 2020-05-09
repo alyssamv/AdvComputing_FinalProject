@@ -1,5 +1,5 @@
 ---
-title: "MH algorithm V2"
+title: "MH algorithm--version 2"
 author: "Ngoc Duong"
 date: "5/8/2020"
 output: github_document
@@ -16,7 +16,7 @@ library(truncnorm)
 ```
 
 ```{r traintest}
-raw_dat = read.csv("./hurrican356.csv") %>%
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
   janitor::clean_names() %>%
   mutate(id = str_sub(id, end = -6L)) %>%
   group_by(id) %>%
@@ -64,10 +64,11 @@ YY = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
 
-### Find log-likelihood 
 
-```{r eval = FALSE}
-## Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
+### Find log-likelihood 
+Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
+
+```{r}
 ## Sigma is a vector of beta_k variances
 ## X is vector of observations
 ## mu_X??
@@ -97,6 +98,23 @@ ll_beta = function(Sigma, X) {
   return(l)
 }
 
+###################################
+ll_rho = function(rhos) {
+  # Prior for correlation rho between time points
+  prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
+  return(log(prob))
+}
+
+ll_sigma = function(sigma) {
+  # Prior for the inverse of the error covariance matrix
+  return(log(dinvgamma(sigma, 0.0001, 0.0001)))
+}
+
+ll_beta = function(betas) {
+  return(sum(log(dnorm(betas, mean = 0, sd = 1))))
+}
+
+###################################
 
 ll_rho = function(rho) {
   a = log(sqrt(5))
@@ -119,36 +137,6 @@ ll_invSigma = function(Sigma) {
   return(diag(l))
 }
 
-```
-
-```{r}
-###################################
-ll_f = function(X, Y, beta, Sigma, rho) {
-  #invsigma = diag(1/Sigma)
-  mu_X = t(X) %*% diag(beta) + rho*Y
-  
-  a = log(Sigma)
-  b = (X - t(mu_X)) %*% (1/Sigma) %*% t(X - t(mu_X))
-  c = 7*log(2*pi)
-  
-  l = -0.5*(as.vector(a + b) + c)
-  return(sum(l))
-}
-
-ll_rho = function(rhos) {
-  prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
-  return(log(prob))
-}
-
-ll_sigma = function(sigma) {
-  return(log(dinvgamma(sigma, 0.0001, 0.0001)))
-}
-
-ll_beta = function(betas) {
-  return(sum(log(dnorm(betas, mean = 0, sd = 1))))
-}
-
-###################################
 
 logpost_all = function(X, Y, beta, rho, Sigma){    
   return(ll_beta(beta) + ll_sigma(Sigma) + ll_rho(rho) + ll_f(X, Y, beta, Sigma, rho))
@@ -275,7 +263,7 @@ Visualize on full chain
 
 ```{r}
 as_tibble(mchain) %>% 
-  mutate(n = c(1:5000)) %>% 
+  mutate(n = c(1:7000)) %>% 
   pivot_longer(V1:V8, 
                names_to = "Predictors",
                values_to = "estimate") %>% 
@@ -285,16 +273,16 @@ as_tibble(mchain) %>%
 ```
 
 
-We can also discard the first 2001 values in the chain as “burnin”. This is a way to select only the last 2001 values for betas and rhos 
+We can also discard the first 501 values in the chain as “burnin”. This is a way to select only the last 501 values for betas and rhos 
 
 ```{r}
 #run the chain
-burned = mchain[2001:5000, ]
+burned = mchain[3001:7000, ]
 ```
 
 Visualize on burned out chain 
 ```{r}
- as_tibble(burned) %>%  mutate(n = c(2001:5000)) %>% 
+ as_tibble(burned) %>%  mutate(n = c(3001:7000)) %>% 
   pivot_longer(V1:V8, 
                names_to = "Predictors",
                values_to = "estimate") %>% 

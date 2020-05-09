@@ -1,22 +1,10 @@
----
-title: "MH algorithm V2"
-author: "Ngoc Duong"
-date: "5/8/2020"
-output: github_document
-editor_options: 
-  chunk_output_type: console
----
+MH algorithm–version 2
+================
+Ngoc Duong
+5/8/2020
 
-```{r setup, include=FALSE}
-library(tidyverse)
-library(invgamma)
-library(mvtnorm)
-library(lubridate)
-library(truncnorm)
-```
-
-```{r traintest}
-raw_dat = read.csv("./hurrican356.csv") %>%
+``` r
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
   janitor::clean_names() %>%
   mutate(id = str_sub(id, end = -6L)) %>%
   group_by(id) %>%
@@ -35,8 +23,7 @@ test = raw_dat %>% # data for test hurricanes
   filter(!(id %in% ind))
 ```
 
-
-```{r}
+``` r
 train_clean = train %>% rename(year = season) %>% 
   separate(time, into = c("date", "hour"), sep = " ") %>% 
   mutate(hour = str_replace(hour, ":00:00\\)", ""),
@@ -63,11 +50,11 @@ XX = train_test %>% mutate(intercept = 1) %>%
 YY = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
+### Find log-likelihood
 
-### Find log-likelihood 
+Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
 
-```{r eval = FALSE}
-## Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
+``` r
 ## Sigma is a vector of beta_k variances
 ## X is vector of observations
 ## mu_X??
@@ -97,6 +84,23 @@ ll_beta = function(Sigma, X) {
   return(l)
 }
 
+###################################
+ll_rho = function(rhos) {
+  # Prior for correlation rho between time points
+  prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
+  return(log(prob))
+}
+
+ll_sigma = function(sigma) {
+  # Prior for the inverse of the error covariance matrix
+  return(log(dinvgamma(sigma, 0.0001, 0.0001)))
+}
+
+ll_beta = function(betas) {
+  return(sum(log(dnorm(betas, mean = 0, sd = 1))))
+}
+
+###################################
 
 ll_rho = function(rho) {
   a = log(sqrt(5))
@@ -119,46 +123,15 @@ ll_invSigma = function(Sigma) {
   return(diag(l))
 }
 
-```
-
-```{r}
-###################################
-ll_f = function(X, Y, beta, Sigma, rho) {
-  #invsigma = diag(1/Sigma)
-  mu_X = t(X) %*% diag(beta) + rho*Y
-  
-  a = log(Sigma)
-  b = (X - t(mu_X)) %*% (1/Sigma) %*% t(X - t(mu_X))
-  c = 7*log(2*pi)
-  
-  l = -0.5*(as.vector(a + b) + c)
-  return(sum(l))
-}
-
-ll_rho = function(rhos) {
-  prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
-  return(log(prob))
-}
-
-ll_sigma = function(sigma) {
-  return(log(dinvgamma(sigma, 0.0001, 0.0001)))
-}
-
-ll_beta = function(betas) {
-  return(sum(log(dnorm(betas, mean = 0, sd = 1))))
-}
-
-###################################
 
 logpost_all = function(X, Y, beta, rho, Sigma){    
   return(ll_beta(beta) + ll_sigma(Sigma) + ll_rho(rho) + ll_f(X, Y, beta, Sigma, rho))
 }
 ```
 
-
 ### MH algorithm
 
-```{r}
+``` r
 MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   
   # cast X as matrix 
@@ -216,30 +189,15 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
 }
 ```
 
-
-```{r eval = FALSE, include = FALSE}
-numunique <- function(mat){
-  for(i in 1:ncol(mat)) {
-    cat(i,"\t",length(unique(mat[,i])),"\n")
-  }
-}
-
-set.seed(1)
-MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
-        train_Y = YY[1], 
-        params = p_start, 
-        avec = avec)
-```
-
 Run MCMC
 
-```{r}
+``` r
 # first, specify the avecs and parameter starting values
 #b_avec = c(0.3, rep(0.7,6)) #c(10, rep(2, 5), 5)
 #avec = c(b_avec, r_a, sig_a)
 
 beta_start = rep(0, 7)
-sigma_start = 300
+sigma_start = 100
 rho_start = 0.5
 p_start = c(beta_start, rho_start, sigma_start)
 
@@ -258,8 +216,7 @@ for (i in 2:nrep) {
 }
 ```
 
-
-```{r eval = FALSE}
+``` r
 par(mfrow = c(4, 2))
 for (k in 1:7) {
   plot(mchain[501:1000, k], type = "l", ylab = k - 1)
@@ -271,9 +228,24 @@ for (i in 1:ncol(mchain)) {
 } 
 ```
 
-Visualize on full chain 
+Visualize on full chain
 
-```{r}
+``` r
+as_tibble(mchain) %>% 
+  mutate(n = c(1:5000)) %>% 
+  pivot_longer(V1:V8, 
+               names_to = "Predictors",
+               values_to = "estimate") %>% 
+  ggplot(aes(x = n, y = estimate, group = Predictors, col = Predictors)) + 
+  geom_line()
+```
+
+    ## Warning: `as_tibble.matrix()` requires a matrix with column names or a `.name_repair` argument. Using compatibility `.name_repair`.
+    ## This warning is displayed once per session.
+
+![](MH-version-2_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
+
+``` r
 as_tibble(mchain) %>% 
   mutate(n = c(1:5000)) %>% 
   pivot_longer(V1:V8, 
@@ -284,16 +256,19 @@ as_tibble(mchain) %>%
   facet_grid(Predictors~.)
 ```
 
+![](MH-version-2_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
 
-We can also discard the first 2001 values in the chain as “burnin”. This is a way to select only the last 2001 values for betas and rhos 
+We can also discard the first 501 values in the chain as “burnin”. This
+is a way to select only the last 501 values for betas and rhos
 
-```{r}
+``` r
 #run the chain
 burned = mchain[2001:5000, ]
 ```
 
-Visualize on burned out chain 
-```{r}
+Visualize on burned out chain
+
+``` r
  as_tibble(burned) %>%  mutate(n = c(2001:5000)) %>% 
   pivot_longer(V1:V8, 
                names_to = "Predictors",
@@ -303,9 +278,13 @@ Visualize on burned out chain
   facet_grid(Predictors~.)
 ```
 
-Next, we might first check the probability of accepting the proposals for each parameter in order to tune the choice ofa. Here’s a useful utility for calculating this:
+![](MH-version-2_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
 
-```{r}
+Next, we might first check the probability of accepting the proposals
+for each parameter in order to tune the choice ofa. Here’s a useful
+utility for calculating this:
+
+``` r
 numunique <- function(mat){
   for(i in 1:ncol(mat)) {
     cat(i,"\t",length(unique(mat[,i])),"\n")
@@ -314,12 +293,22 @@ numunique <- function(mat){
 
 #for betas (1-7), rhos (8), and sigma (9)
 numunique(mchain[, 1:9])
+```
 
+    ## 1     1974 
+    ## 2     5000 
+    ## 3     5000 
+    ## 4     5000 
+    ## 5     5000 
+    ## 6     5000 
+    ## 7     5000 
+    ## 8     2447 
+    ## 9     1
+
+``` r
 #for rhos
 #numunique(mchain[, 8])
 
 #for sigma?
 #numunique(mchain[, 9])
 ```
-
-
