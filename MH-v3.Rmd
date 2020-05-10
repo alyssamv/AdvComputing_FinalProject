@@ -43,15 +43,12 @@ train_clean = train %>% rename(year = season) %>%
          date = yday(date),
          nature = as.numeric(as.factor(nature))) %>% 
   group_by(id) %>% 
-  mutate(n_latitude = lag(latitude,6),
-         n_longitude = lag(longitude,6),
-         n_windkt = lag(wind_kt,6),
-         diff_long = c(NA, diff(longitude)),
-         diff_lat = c(NA, diff(latitude)),
-         diff_windkt = c(NA, diff(wind_kt))) %>% 
-  ungroup() %>% 
-  na.omit() %>% 
-  select(id, wind_kt, n_windkt, date, year, nature, diff_lat, diff_long, diff_windkt)
+  mutate(diff_long = longitude - lag(longitude,6),
+         diff_lat = latitude - lag(latitude,6),
+         diff_windkt = wind_kt - lag(wind_kt,6)) %>% 
+  ungroup() %>% na.omit() %>% 
+  select(id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt)
+
 train_test = filter(train_clean, id == "ALLISON")
   
 XX = train_test %>% mutate(intercept = 1) %>% 
