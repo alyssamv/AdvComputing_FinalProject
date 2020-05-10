@@ -43,9 +43,9 @@ train_clean = train %>% rename(year = season) %>%
          date = yday(date),
          nature = as.numeric(as.factor(nature))) %>% 
   group_by(id) %>% 
-  mutate(n_latitude = lag(latitude,1),
-         n_longitude = lag(longitude,1),
-         n_windkt = lag(wind_kt,1),
+  mutate(n_latitude = lag(latitude,6),
+         n_longitude = lag(longitude,6),
+         n_windkt = lag(wind_kt,6),
          diff_long = c(NA, diff(longitude)),
          diff_lat = c(NA, diff(latitude)),
          diff_windkt = c(NA, diff(wind_kt))) %>% 
