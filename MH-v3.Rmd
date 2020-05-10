@@ -16,7 +16,7 @@ library(truncnorm)
 ```
 
 ```{r traintest}
-raw_dat = read.csv("./hurrican356.csv")) %>%
+raw_dat = read.csv("./hurrican356.csv") %>%
   janitor::clean_names() %>%
   mutate(id = str_sub(id, end = -6L)) %>%
   group_by(id) %>%
@@ -297,9 +297,13 @@ numunique(mchain[, 1:9])
 Loop
 
 ```{r}
+XX = train_clean %>% mutate(intercept = 1) %>% 
+  select(intercept, date:diff_windkt) %>% as.matrix()
+
+YY = train_clean %>% select(wind_kt) %>% as_vector()
+
 nrep = 2000
-burned = matrix(nrow = 10, ncol = 9)
-res = vector(length = 9)
+burned = matrix(nrow = nrow(train_clean), ncol = 9)
 bnd = sort(nrep - (0:((nrep/2) - 1)))
 
 for (k in 1:nrow(train_clean)){
