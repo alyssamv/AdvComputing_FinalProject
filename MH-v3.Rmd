@@ -16,17 +16,15 @@ library(truncnorm)
 ```
 
 ```{r traintest}
-raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
+raw_dat = read.csv("./hurrican356.csv")) %>%
   janitor::clean_names() %>%
   mutate(id = str_sub(id, end = -6L)) %>%
   group_by(id) %>%
   mutate(n = 1,
          t = cumsum(n) - 1) %>% # create t variable grouped by hurrican
   select(-n)
-
 ## 80-20 train/test data split ***by hurricane***
 hurricane_names = unique(raw_dat$id) # unique hurricanes
-
 set.seed(1)
 ind = sample(hurricane_names, size = length(hurricane_names)*0.8) # sample hurricanes with probability 0.8 for training
 train = raw_dat %>% # data for train hurricanes
@@ -54,12 +52,10 @@ train_clean = train %>% rename(year = season) %>%
   ungroup() %>% 
   na.omit() %>% 
   select(id, wind_kt, n_windkt, date, year, nature, diff_lat, diff_long, diff_windkt)
-
 train_test = filter(train_clean, id == "ALLISON")
   
 XX = train_test %>% mutate(intercept = 1) %>% 
   select(intercept, date:diff_windkt) %>% as.matrix()
-
 YY = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
@@ -73,7 +69,6 @@ Betas ~ indep MVN, rho ~ truncated normal, Sigma ~ inverse-gamma
 ## X is vector of observations
 ## mu_X??
 ## rho is scalar
-
 ll_f = function(X, Y, beta, Sigma, rho) {
   sig.vec = rep(Sigma, 7)
   invsigma = diag(1/sig.vec)
@@ -86,11 +81,7 @@ ll_f = function(X, Y, beta, Sigma, rho) {
   l = -0.5*(as.vector(a + b) + c)
   return(l)
 }
-
-
 # ll_f(xx1, YY[10], beta = rep(0, 7), Sigma = 1, rho = 0.5)
-
-
 # ll_beta = function(Sigma, X) {
 #   invsigma = diag(1/Sigma)
 #   
@@ -101,25 +92,20 @@ ll_f = function(X, Y, beta, Sigma, rho) {
 #   l = -0.5*(as.vector(a + b) + c)
 #   return(l)
 # }
-
 ###################################
 ll_rho = function(rhos) {
   # Prior for correlation rho between time points
   prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
   return(log(prob))
 }
-
 ll_sigma = function(sigma) {
   # Prior for the inverse of the error covariance matrix
   return(log(dinvgamma(1/sigma, 0.0001, 0.0001)))
 }
-
 ll_beta = function(betas) {
   return((log(dnorm(betas, mean = 0, sd = 1))))
 }
-
 ###################################
-
 # ll_rho = function(rho) {
 #   a = log(sqrt(5))
 #   b = log(dnorm(sqrt(5)*(rho - 0.5)))
@@ -128,10 +114,8 @@ ll_beta = function(betas) {
 #   l = a + b - c
 #   return(l)
 # }
-
 ll_invSigma = function(Sigma) {
   invsigma = diag(1/Sigma)
-
   a = 0.001*log(0.001)
   b = log(factorial(0.001 - 1))
   c = 1.001*log(invsigma)
@@ -140,8 +124,6 @@ ll_invSigma = function(Sigma) {
   l = a - b + c + d
   return(diag(l))
 }
-
-
 logpost_all = function(X, Y, beta, rho, Sigma){  
   post_beta = ll_beta(beta) + ll_sigma(Sigma) + ll_f(X, Y, beta, Sigma, rho)
   post_rho = ll_rho(rho) + ll_f(X, Y, beta, Sigma, rho)
@@ -149,7 +131,6 @@ logpost_all = function(X, Y, beta, rho, Sigma){
   
   return(c(post_beta, post_rho, post_sigma))
 }
-
 # xx1 = unname(XX[10,]) %>% as.matrix
 # 
 # logpost_all(xx1, YY[10], beta = mchain[4, 1:7], rho = 0.5, Sigma = 1)
@@ -169,8 +150,6 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   train_X = unname(train_X) %>% as.matrix
   bnum = vector(length = 7)
   bdenom = vector(length = 7)
-
-
   # initialize parameter vectors
   bb = c() # beta vec
   rr = NA # rho
@@ -179,12 +158,9 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   p_betas = cur_betas = params[1:7]
   cur_rho = p_rho = params[8]
   cur_sigma = params[9]
-
-
   
   # estimate Betas
   for (j in 1:7) {
-
     cur_betas[j] = p_betas[j]
     p_betas[j] = cur_betas[j] + (runif(1) - 0.5) * 2 * b_avec[j]
     
@@ -216,18 +192,14 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
     ss = p_sigma
   } else {
     ss = cur_sigma}
-
   
   return(c(bb, rr, ss))
 }
-
-
 numunique <- function(mat){
   for(i in 1:ncol(mat)) {
     cat(i,"\t",length(unique(mat[,i])),"\n")
   }
 }
-
 ```
 
 Run MCMC
@@ -236,40 +208,44 @@ Run MCMC
 # first, specify the avecs and parameter starting values
 #b_avec = c(0.3, rep(0.7,6)) #c(10, rep(2, 5), 5)
 #avec = c(b_avec, r_a, sig_a)
-
 beta_start = rep(0, 7)
 sigma_start = 1
 rho_start = 0.5
 p_start = c(beta_start, rho_start, sigma_start)
-
 nrep = 2000
 # second half index
 bnd = sort(nrep - (0:((nrep/2) - 1)))
-
-
 mchain <- matrix(NA, nrow = nrep, ncol = 9)
 mchain[1, ] <- p_start
+
+# set.seed(7)
+# for (i in 2:nrep) {
+#   mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
+#                         train_Y = YY[10], 
+#                         params = mchain[i - 1, ], 
+#                         b_avec = c(0.8, 0.02, rep(0.008, 5)),
+#                         r_a = 0.04,
+#                         sig_a = 0.3)
+# }
+
 
 set.seed(7)
 for (i in 2:nrep) {
   mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
                         train_Y = YY[10], 
                         params = mchain[i - 1, ], 
-                        b_avec = c(0.8, 0.02, rep(0.008, 5)),
-                        r_a = 0.04,
-                        sig_a = 0.3)
+                        b_avec = c(0.9, 0.1, rep(0.005, 5)),
+                        r_a = 0.05,
+                        sig_a = 0.75)
 }
-
-par(mfrow = c(5, 2))
-for (k in 1:ncol(mchain)) {
-  plot(mchain[bnd, k], type = "l", ylab = k - 1)
-}
-
-numunique(mchain)
-
-for (i in 1:ncol(mchain)) {
-  cat(i, "\t", mean(mchain[bnd, i]), "\n")
-} 
+# par(mfrow = c(5, 2))
+# for (k in 1:ncol(mchain)) {
+#   plot(mchain[bnd, k], type = "l", ylab = k - 1)
+# }
+# numunique(mchain)
+# for (i in 1:ncol(mchain)) {
+#   cat(i, "\t", mean(mchain[bnd, i]), "\n")
+# } 
 ```
 
 Visualize on full chain 
@@ -289,8 +265,6 @@ as_tibble(mchain) %>%
 We can also discard the first 501 values in the chain as “burnin”. This is a way to select only the last 501 values for betas and rhos 
 
 ```{r}
-
-
 #run the chain
 burned = mchain[bnd, ]
 ```
@@ -310,16 +284,34 @@ Visualize on burned out chain
 Next, we might first check the probability of accepting the proposals for each parameter in order to tune the choice ofa. Here’s a useful utility for calculating this:
 
 ```{r}
-
-
 #for betas (1-7), rhos (8), and sigma (9)
 numunique(mchain[, 1:9])
-
 #for rhos
 #numunique(mchain[, 8])
-
 #for sigma?
 #numunique(mchain[, 9])
+```
+
+
+
+Loop
+
+```{r}
+nrep = 2000
+burned = matrix(nrow = 10, ncol = 9)
+res = vector(length = 9)
+bnd = sort(nrep - (0:((nrep/2) - 1)))
+
+for (k in 1:nrow(train_clean)){
+  for (i in 2:nrep) {
+  mchain[i, ] = MH_step(train_X = XX[k, ], # estimates must be made for each row (hour t)
+                        train_Y = YY[k], 
+                        params = mchain[i - 1, ], 
+                        b_avec = c(0.9, 0.1, rep(0.005, 5)),
+                        r_a = 0.05,
+                        sig_a = 0.75)}
+    burned[k,] = apply(mchain[bnd, ], 2, mean)
+}
 ```
 
 
