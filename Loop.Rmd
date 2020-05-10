@@ -1,0 +1,128 @@
+---
+title: "Loop for training hurricanes"
+author: "Alyssa Vanderbeek"
+date: "5/8/2020"
+output: github_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(invgamma)
+library(mvtnorm)
+library(lubridate)
+library(truncnorm)
+library(doParallel)
+library(parallel)
+
+
+source(file.path(getwd(), "mcmc functions.R"))
+```
+
+```{r traintest}
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
+  janitor::clean_names() %>%
+  mutate(id = str_sub(id, end = -6L)) %>%
+  rename(year = season) %>% 
+  separate(time, into = c("date", "hour"), sep = " ") %>%
+  mutate(hour = str_replace(hour, ":00:00\\)", ""),
+         hour = as.numeric(hour),
+         date = str_replace(date, "\\(", ""),
+         date = yday(date),
+         nature = as.numeric(as.factor(nature))) %>%
+  mutate(unique_id = group_indices(., id, year)) %>%
+  group_by(unique_id) %>%
+  mutate(n = 1,
+         t = cumsum(n) - 1) %>% # create t variable grouped by hurrican
+  select(-n)
+
+## 80-20 train/test data split ***by hurricane***
+hurricane_names = unique(raw_dat$unique_id) # unique hurricanes
+
+set.seed(1)
+ind = sample(hurricane_names, size = length(hurricane_names)*0.8) # sample hurricanes with probability 0.8 for training
+train = raw_dat %>% # data for train hurricanes
+  filter(unique_id %in% ind)
+test = raw_dat %>% # data for test hurricanes
+  filter(!(unique_id %in% ind))
+
+
+train_clean = train %>%
+  group_by(unique_id) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 6),
+         diff_long = longitude - lag(longitude, 6),
+         diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
+  ungroup() %>% 
+  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt) %>% 
+  na.omit
+
+```
+
+
+
+```{r mcmc_loop}
+nrep = 2000
+bnd = sort(nrep - (0:((nrep/2) - 1))) # second half index (after burn-in)
+
+beta_start = rep(0, 7)
+sigma_start = 1
+rho_start = 0.5
+p_start = c(beta_start, rho_start, sigma_start)
+
+all_models = list()
+chains = vector("list", length = length(ind))
+
+
+cores = detectCores()
+clust <- makeCluster(cores[1] - 1) 
+registerDoParallel(clust)
+#for (k in 3) {
+chains = foreach(k = 1:length(ind), 
+                 .combine = list, 
+                 .packages = c("tidyverse","invgamma","truncnorm","mvtnorm", "lubridate")) %dopar% {
+  # get data for unique hurricane
+  id = ind[k]
+  XX = train_clean %>% 
+    filter(unique_id == id) %>%
+    mutate(intercept = 1) %>% 
+    select(intercept, date:diff_windkt) %>%
+    as.matrix
+  YY = train_clean %>% filter(unique_id == id) %>% select(wind_kt) %>% as.vector
+  
+  # matrix to hold mean parameter estimates (cols) for each time point (rows)
+  models_t = matrix(nrow = nrow(XX), ncol = 9)
+  chains_t = vector("list", length = nrow(XX))
+
+  # run MCMC for each time point
+  for (j in 1:nrow(XX)) {
+    # chains
+    mchain <- matrix(NA, nrow = nrep, ncol = 9)
+    mchain[1, ] <- p_start
+    
+    for (i in 2:nrep) {
+      mchain[i, ] = MH_step(train_X = XX[j, ], # estimates must be made for each row (hour t)
+                            train_Y = YY[[1]][j], 
+                            params = mchain[i - 1, ], 
+                            b_avec = c(0.9, 0.1, rep(0.005, 5)),
+                            r_a = 0.05,
+                            sig_a = 0.75)
+      
+    }
+    # save chains
+    chains_t[[j]] = mchain[bnd, ]
+    # estimates for post burn-in
+    #est = colMeans[mchain[bnd, ], na.rm = TRUE]
+    #models_t[j, ] = est
+  }
+  chains_t
+  #all_models[[k]] = models_t
+  
+  #list(chains[[k]], models[[k]])
+}
+
+parallel::stopCluster(clust)
+
+save.image(file = "all_chains.RData")
+```
+
