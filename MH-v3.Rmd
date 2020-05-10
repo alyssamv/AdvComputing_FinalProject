@@ -16,43 +16,51 @@ library(truncnorm)
 ```
 
 ```{r traintest}
-raw_dat = read.csv("./hurrican356.csv") %>%
+raw_dat = read.csv(file.path(getwd(), "hurrican356.csv")) %>%
   janitor::clean_names() %>%
   mutate(id = str_sub(id, end = -6L)) %>%
-  group_by(id) %>%
-  mutate(n = 1,
-         t = cumsum(n) - 1) %>% # create t variable grouped by hurrican
-  select(-n)
-## 80-20 train/test data split ***by hurricane***
-hurricane_names = unique(raw_dat$id) # unique hurricanes
-set.seed(1)
-ind = sample(hurricane_names, size = length(hurricane_names)*0.8) # sample hurricanes with probability 0.8 for training
-train = raw_dat %>% # data for train hurricanes
-  filter(id %in% ind)
-test = raw_dat %>% # data for test hurricanes
-  filter(!(id %in% ind))
-```
-
-
-```{r}
-train_clean = train %>% rename(year = season) %>% 
-  separate(time, into = c("date", "hour"), sep = " ") %>% 
+  rename(year = season) %>% 
+  separate(time, into = c("date", "hour"), sep = " ") %>%
   mutate(hour = str_replace(hour, ":00:00\\)", ""),
          hour = as.numeric(hour),
          date = str_replace(date, "\\(", ""),
          date = yday(date),
-         nature = as.numeric(as.factor(nature))) %>% 
-  group_by(id) %>% 
-  mutate(diff_long = longitude - lag(longitude,6),
-         diff_lat = latitude - lag(latitude,6),
-         diff_windkt = wind_kt - lag(wind_kt,6)) %>% 
-  ungroup() %>% na.omit() %>% 
-  select(id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt)
+         nature = as.numeric(as.factor(nature))) %>%
+  mutate(unique_id = group_indices(., id, year)) %>%
+  group_by(unique_id) %>%
+  mutate(n = 1,
+         t = cumsum(n) - 1) %>% # create t variable grouped by hurrican
+  select(-n)
 
-train_test = filter(train_clean, id == "ALLISON")
+## 80-20 train/test data split ***by hurricane***
+hurricane_names = unique(raw_dat$unique_id) # unique hurricanes
+
+set.seed(1)
+ind = sample(hurricane_names, size = length(hurricane_names)*0.8) # sample hurricanes with probability 0.8 for training
+train = raw_dat %>% # data for train hurricanes
+  filter(unique_id %in% ind)
+test = raw_dat %>% # data for test hurricanes
+  filter(!(unique_id %in% ind))
+```
+
+
+```{r}
+train_clean = train %>%
+  group_by(unique_id) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 6),
+         diff_long = longitude - lag(longitude, 6),
+         diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
+  ungroup() %>% 
+  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt) %>% 
+  na.omit
+
+train_test = train_clean %>% filter(unique_id == 1)
   
-XX = train_test %>% mutate(intercept = 1) %>% 
-  select(intercept, date:diff_windkt) %>% as.matrix()
+XX = train_test %>% 
+  mutate(intercept = 1) %>% 
+  select(intercept, date:diff_windkt) %>% 
+  as.matrix()
+
 YY = train_test %>% select(wind_kt) %>% as_vector()
 ```
 
@@ -95,12 +103,12 @@ ll_rho = function(rhos) {
   prob = dtruncnorm(rhos, a = 0, b = 1, mean = 0.5, sd = sqrt(0.2))
   return(log(prob))
 }
-ll_sigma = function(sigma) {
+ll_invsigma = function(sigma) {
   # Prior for the inverse of the error covariance matrix
-  return(log(dinvgamma(1/sigma, 0.0001, 0.0001)))
+  return(log(dinvgamma(1/sigma, shape = 0.0001, rate = 0.0001)))
 }
-ll_beta = function(betas) {
-  return((log(dnorm(betas, mean = 0, sd = 1))))
+ll_beta = function(betas, sigma) {
+  return((log(dnorm(betas, mean = 0, sd = sqrt(sigma)))))
 }
 ###################################
 # ll_rho = function(rho) {
@@ -111,26 +119,26 @@ ll_beta = function(betas) {
 #   l = a + b - c
 #   return(l)
 # }
-ll_invSigma = function(Sigma) {
-  invsigma = diag(1/Sigma)
-  a = 0.001*log(0.001)
-  b = log(factorial(0.001 - 1))
-  c = 1.001*log(invsigma)
-  d = 0.001/invsigma
-  
-  l = a - b + c + d
-  return(diag(l))
-}
+# ll_invSigma = function(Sigma) {
+#   invsigma = diag(1/Sigma)
+#   a = 0.001*log(0.001)
+#   b = log(factorial(0.001 - 1))
+#   c = 1.001*log(invsigma)
+#   d = 0.001/invsigma
+#   
+#   l = a - b + c + d
+#   return(as.numeric(l))
+# }
 logpost_all = function(X, Y, beta, rho, Sigma){  
-  post_beta = ll_beta(beta) + ll_sigma(Sigma) + ll_f(X, Y, beta, Sigma, rho)
+  post_beta = ll_beta(beta, Sigma) + ll_invsigma(Sigma) + ll_f(X, Y, beta, Sigma, rho)
   post_rho = ll_rho(rho) + ll_f(X, Y, beta, Sigma, rho)
-  post_sigma = ll_sigma(Sigma) + ll_f(X, Y, beta, Sigma, rho)
+  post_sigma = ll_invsigma(Sigma) + ll_f(X, Y, beta, Sigma, rho)
   
   return(c(post_beta, post_rho, post_sigma))
 }
-# xx1 = unname(XX[10,]) %>% as.matrix
+xx1 = unname(XX[10,]) %>% as.matrix
 # 
-# logpost_all(xx1, YY[10], beta = mchain[4, 1:7], rho = 0.5, Sigma = 1)
+logpost_all(xx1, YY[10], beta = mchain[4, 1:7], rho = 0.2, Sigma = -2)
 # 
 # ll_rho(0.5)
 # 
@@ -145,25 +153,27 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   
   # cast X as matrix 
   train_X = unname(train_X) %>% as.matrix
-  bnum = vector(length = 7)
-  bdenom = vector(length = 7)
-  # initialize parameter vectors
+
+  # initialize vectors for posterior estimates
   bb = c() # beta vec
   rr = NA # rho
   ss = NA # Sigma
   
+  # current values 
   p_betas = cur_betas = params[1:7]
-  cur_rho = p_rho = params[8]
+  cur_rho = params[8]
   cur_sigma = params[9]
   
+  ### Component-wise MH 
   # estimate Betas
+  bnum = vector(length = 7)
+  bdenom = vector(length = 7)
   for (j in 1:7) {
     cur_betas[j] = p_betas[j]
-    p_betas[j] = cur_betas[j] + (runif(1) - 0.5) * 2 * b_avec[j]
+    p_betas[j] = cur_betas[j] + (runif(1) - 0.5) * 2 * b_avec[j] # use random walk to sample next value
     
     bnum = logpost_all(train_X, train_Y, beta = p_betas, rho = cur_rho, Sigma = cur_sigma)
     bdenom = logpost_all(train_X, train_Y, beta = cur_betas, rho = cur_rho, Sigma = cur_sigma)
-    ## Assign posterior values (component-wise, since logpost_all gives vector)
     if (log(runif(1)) < (bnum[j] - bdenom[j])) {
       bb[j] = p_betas[j]
     } else {
@@ -183,6 +193,12 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   
   #sampling sigmas
   p_sigma = cur_sigma + (runif(1) - 0.5) * 2 * sig_a
+  
+  # if (p_sigma < 0) {
+  #   snum = Inf
+  # } else {
+  #   snum = logpost_all(train_X, train_Y, beta = bb, rho = rr, Sigma = p_sigma)
+  # }
   snum = logpost_all(train_X, train_Y, beta = bb, rho = rr, Sigma = p_sigma)
   sdenom = logpost_all(train_X, train_Y, beta = bb, rho = rr, Sigma = cur_sigma)
   if (log(runif(1)) < (snum[9] - sdenom[9])) {
@@ -192,11 +208,13 @@ MH_step = function(train_X, train_Y, params, b_avec, r_a, sig_a){
   
   return(c(bb, rr, ss))
 }
+
 numunique <- function(mat){
-  for(i in 1:ncol(mat)) {
-    cat(i,"\t",length(unique(mat[,i])),"\n")
-  }
+  apply(mat, 2, function(i){
+    length(unique(i))
+  })
 }
+  
 ```
 
 Run MCMC
@@ -209,53 +227,41 @@ beta_start = rep(0, 7)
 sigma_start = 1
 rho_start = 0.5
 p_start = c(beta_start, rho_start, sigma_start)
+
 nrep = 2000
-# second half index
-bnd = sort(nrep - (0:((nrep/2) - 1)))
+bnd = sort(nrep - (0:((nrep/2) - 1))) # second half index (after burn-in)
 mchain <- matrix(NA, nrow = nrep, ncol = 9)
 mchain[1, ] <- p_start
 
-# set.seed(7)
-# for (i in 2:nrep) {
-#   mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
-#                         train_Y = YY[10], 
-#                         params = mchain[i - 1, ], 
-#                         b_avec = c(0.8, 0.02, rep(0.008, 5)),
-#                         r_a = 0.04,
-#                         sig_a = 0.3)
-# }
+# MH_step(train_X = XX[1, ], # estimates must be made for each row (hour t)
+#                         train_Y = YY[1], 
+#                         params = mchain[1, ], 
+#                         b_avec = c(5, 0.2, 0.01, rep(1.1, 4)),
+#                         r_a = 0.1,
+#                         sig_a = 1)
 
-
-set.seed(7)
 for (i in 2:nrep) {
-  mchain[i, ] = MH_step(train_X = XX[10, ], # estimates must be made for each row (hour t)
-                        train_Y = YY[10], 
+  mchain[i, ] = MH_step(train_X = XX[15, ], # estimates must be made for each row (hour t)
+                        train_Y = YY[15], 
                         params = mchain[i - 1, ], 
-                        b_avec = c(0.9, 0.1, rep(0.005, 5)),
-                        r_a = 0.05,
-                        sig_a = 0.75)
+                        b_avec = c(6.5, 0.1, 0.009, 5, 6, 3.5, 1), #rep(3.5, 4)),
+                        r_a = 0.1,
+                        sig_a = 1)
 }
-# par(mfrow = c(5, 2))
-# for (k in 1:ncol(mchain)) {
-#   plot(mchain[bnd, k], type = "l", ylab = k - 1)
-# }
-# numunique(mchain)
-# for (i in 1:ncol(mchain)) {
-#   cat(i, "\t", mean(mchain[bnd, i]), "\n")
-# } 
-```
 
-Visualize on full chain 
-
-```{r}
-as_tibble(mchain) %>% 
-  mutate(n = c(1:nrep)) %>% 
+as_tibble(mchain[bnd, ]) %>% 
+  mutate(n = 1:nrow(.)) %>% 
   pivot_longer(V1:V9, 
                names_to = "Predictors",
                values_to = "estimate") %>% 
   ggplot(aes(x = n, y = estimate, group = Predictors, col = Predictors)) + 
   geom_line() +
   facet_grid(Predictors~., scales = "free")
+
+numunique(mchain[bnd, ])
+colMeans(mchain[bnd, ])
+
+
 ```
 
 
