@@ -319,3 +319,30 @@ for (k in 1:nrow(train_clean)){
 ```
 
 
+Parallel computing
+
+```{r}
+library(doParallel)
+library(parallel)
+
+nrep = 2000
+bnd = sort(nrep - (0:((nrep/2) - 1)))
+
+cl <- parallel::makeCluster(4)
+doParallel::registerDoParallel(cl)
+
+foreach(k = 1:nrow(train_clean), .combine = rbind, .packages = c("tidyverse","invgamma","truncnorm","mvtnorm", "lubridate")) %dopar% {
+  for (i in 2:nrep) {
+  mchain[i, ] = MH_step(train_X = XX[k, ],
+                        train_Y = YY[k], 
+                        params = mchain[i - 1, ], 
+                        b_avec = c(0.9, 0.1, rep(0.005, 5)),
+                        r_a = 0.05,
+                        sig_a = 0.75)}
+    burned = apply(mchain[bnd, ], 2, mean)
+}
+
+parallel::stopCluster(cl)
+```
+
+
