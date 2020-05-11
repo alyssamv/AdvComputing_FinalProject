@@ -2,10 +2,10 @@
 ll_f = function(X, Y, beta, Sigma, rho) {
   sig.vec = rep(Sigma, 7)
   invsigma = diag(1/sig.vec)
-  mu_X = t(X) %*% diag(beta) + rho*Y
+  mu_X = (X) %*% diag(beta) + rho*Y
   
   a = log(Sigma)
-  b = t(X - t(mu_X)) %*% invsigma %*% (X - t(mu_X)) %>% as.numeric
+  b = (X - (mu_X)) %*% invsigma %*% t(X - (mu_X)) %>% as.numeric
   c = 7*log(2*pi)
   
   l = -0.5*(as.vector(a + b) + c)

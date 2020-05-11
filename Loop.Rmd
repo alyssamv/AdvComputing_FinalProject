@@ -50,11 +50,20 @@ test = raw_dat %>% # data for test hurricanes
 
 train_clean = train %>%
   group_by(unique_id) %>% 
-  mutate(diff_lat = latitude - lag(latitude, 6),
-         diff_long = longitude - lag(longitude, 6),
-         diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 1),
+         diff_long = longitude - lag(longitude, 1),
+         diff_windkt = wind_kt - lag(wind_kt, 1)) %>% 
   ungroup() %>% 
-  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt) %>% 
+  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt, t) %>% 
+  na.omit
+
+test_clean = test %>%
+  group_by(unique_id) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 1),
+         diff_long = longitude - lag(longitude, 1),
+         diff_windkt = wind_kt - lag(wind_kt, 1)) %>% 
+  ungroup() %>% 
+  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt, t) %>% 
   na.omit
 
 ```
@@ -62,7 +71,16 @@ train_clean = train %>%
 
 
 ```{r mcmc_loop}
-nrep = 2000
+## smaller training set for computational purposes
+set.seed(1)
+ind_reduced = sample(x = ind, size = 20)
+train_reduced = train_clean %>% filter(unique_id %in% ind_reduced)
+
+test_ind_reduced = sample(x = test$unique_id, size = 5)
+test_reduced = test %>% filter(unique_id %in% test_ind_reduced)
+
+## initialize loop
+nrep = 1e3
 bnd = sort(nrep - (0:((nrep/2) - 1))) # second half index (after burn-in)
 
 beta_start = rep(0, 7)
@@ -70,59 +88,88 @@ sigma_start = 1
 rho_start = 0.5
 p_start = c(beta_start, rho_start, sigma_start)
 
-all_models = list()
-chains = vector("list", length = length(ind))
 
+
+start = Sys.time()
 
 cores = detectCores()
 clust <- makeCluster(cores[1] - 1) 
 registerDoParallel(clust)
-#for (k in 3) {
-chains = foreach(k = 1:length(ind), 
-                 .combine = list, 
-                 .packages = c("tidyverse","invgamma","truncnorm","mvtnorm", "lubridate")) %dopar% {
-  # get data for unique hurricane
-  id = ind[k]
-  XX = train_clean %>% 
-    filter(unique_id == id) %>%
-    mutate(intercept = 1) %>% 
-    select(intercept, date:diff_windkt) %>%
-    as.matrix
-  YY = train_clean %>% filter(unique_id == id) %>% select(wind_kt) %>% as.vector
-  
-  # matrix to hold mean parameter estimates (cols) for each time point (rows)
-  models_t = matrix(nrow = nrow(XX), ncol = 9)
-  chains_t = vector("list", length = nrow(XX))
 
-  # run MCMC for each time point
-  for (j in 1:nrow(XX)) {
-    # chains
-    mchain <- matrix(NA, nrow = nrep, ncol = 9)
-    mchain[1, ] <- p_start
-    
-    for (i in 2:nrep) {
-      mchain[i, ] = MH_step(train_X = XX[j, ], # estimates must be made for each row (hour t)
-                            train_Y = YY[[1]][j], 
-                            params = mchain[i - 1, ], 
-                            b_avec = c(0.9, 0.1, rep(0.005, 5)),
-                            r_a = 0.05,
-                            sig_a = 0.75)
-      
-    }
-    # save chains
-    chains_t[[j]] = mchain[bnd, ]
-    # estimates for post burn-in
-    #est = colMeans[mchain[bnd, ], na.rm = TRUE]
-    #models_t[j, ] = est
-  }
-  chains_t
-  #all_models[[k]] = models_t
-  
-  #list(chains[[k]], models[[k]])
-}
+#chains = vector("list", length = length(ind))
+chains = foreach(k = 1:nrow(train_reduced), 
+                 .combine = rbind, 
+                 .packages = c("tidyverse","invgamma","truncnorm","mvtnorm", "lubridate"),
+                 .errorhandling = "remove") %dopar% {
+                   
+                   XX = train_reduced[k, ] %>% 
+                     mutate(intercept = 1) %>% 
+                     select(intercept, date:diff_windkt) %>%
+                     as.matrix
+                   YY = train_reduced[k, ] %>% select(wind_kt) %>% as.vector
+
+                   
+                   # chains
+                   mchain <- matrix(NA, nrow = nrep, ncol = 9)
+                   mchain[1, ] <- p_start
+                   
+                   for (i in 2:nrep) {
+                     mchain[i, ] = MH_step(train_X = XX, # estimates must be made for each row (hour t)
+                                           train_Y = YY[[1]], 
+                                           params = mchain[i - 1, ], 
+                                           b_avec = c(6, 0.1, 0.01, rep(0.005, 4)),
+                                           r_a = 0.1,
+                                           sig_a = 0.8)
+                     
+                   }
+                   
+                   # save chains
+                   mchain[bnd, ]
+                 }
 
 parallel::stopCluster(clust)
 
-save.image(file = "all_chains.RData")
+end = Sys.time()
+
+end - start # runtime
+
+
+as_tibble(chains[1:10000, ]) %>% 
+  mutate(n = 1:nrow(.)) %>% 
+  pivot_longer(V1:V9, 
+               names_to = "Predictors",
+               values_to = "estimate") %>% 
+  ggplot(aes(x = n, y = estimate, group = Predictors, col = Predictors)) + 
+  geom_line() +
+  facet_grid(Predictors~., scales = "free") +
+  theme_bw() +
+  theme(legend.position = "none")
+
+numunique(chains)
+model = colMeans(chains)
+```
+
+```{r cred_int}
+cred_int = list()
+for (i in 1:9) {
+  cred_int[[i]] = bayestestR::ci(chains[, i], ci = 0.95, method = "ETI")
+}
+cred_int
+
+param.labels = c(paste0("beta", 0:6), "rho", "Sigma")
+
+par(mfrow = c(5, 2))
+for (i in 1:9) {
+  int.low = cred_int[[i]]$CI_low
+  int.high = cred_int[[i]]$CI_high
+  
+  hist(chains[, i], 
+       main = paste0("Histogram of ", param.labels[i]))
+  abline(v = model[i], lty = 2, lwd = 3)
+  abline(v = int.low, col = "blue")
+  abline(v = int.high, col = "blue")
+}
+
+
 ```
 
