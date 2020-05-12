@@ -52,7 +52,7 @@ train_clean = train %>%
          diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
   ungroup() %>% 
   dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt) %>% 
-  na.omit
+  na.omit()
 
 train_test = train_clean %>% filter(unique_id == 1)
   
@@ -264,8 +264,6 @@ colMeans(mchain[bnd, ])
 
 ```
 
-
-
 Loop
 
 ```{r}
@@ -315,6 +313,61 @@ foreach(k = 1:nrow(train_clean), .combine = rbind, .packages = c("tidyverse","in
 }
 
 parallel::stopCluster(cl)
+```
+
+
+**Calculate prediction error**
+
+Prepare test data
+
+```{r}
+test_clean = test %>%
+  group_by(unique_id) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 6),
+         diff_long = longitude - lag(longitude, 6),
+         diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
+  ungroup() %>% 
+  dplyr::select(unique_id, wind_kt, date, year, nature, diff_lat, diff_long, diff_windkt) %>% 
+  na.omit() %>% mutate(intercept = 1) %>% 
+  select(intercept, date:diff_windkt, wind_kt) %>% 
+  as.matrix()
+```
+
+Assume we already obtained a vector of estimated paramaters: param
+
+```{r}
+# prediction function
+pred = function(data, param){
+  return(data[,c(1:7)] %*% param[1:7] + param[8]*(as.numeric(data[,"wind_kt"])) + rnorm(1, mean = 0, sd = param[9]))
+}
+
+#predict wind speed at t+6
+pred_y = pred(test_clean, param)
+```
+
+Obtain vector of true y(t+6) (need to revise if these are the correct position of y(t+6)'s)
+
+```{r}
+test_true_y = test %>%
+  group_by(unique_id) %>% 
+  mutate(diff_lat = latitude - lag(latitude, 6),
+         diff_long = longitude - lag(longitude, 6),
+         diff_windkt = wind_kt - lag(wind_kt, 6)) %>% 
+  dplyr::select(wind_kt) %>% 
+  slice(-c(1:6)) %>% 
+  ungroup() %>% 
+  na.omit()
+
+test_true_y = as.matrix(test_true_y)[,2]
+```
+
+MSE and RMSE
+```{r}
+#find MSE 
+MSE = mean((pred_y-test_true_y)^2)
+
+#RMSE 
+RMSE = sqrt(MSE)
 ```
 
 
